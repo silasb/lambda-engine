@@ -18,10 +18,17 @@ type Invocation struct {
 	Res []byte
 }
 
+type Handler struct {
+	workCh     chan *Invocation
+	responseCh chan *Invocation
+	proCh      chan string
+}
+
 func main() {
 
 	work := make(chan *Invocation)
 	responseChannel := make(chan *Invocation)
+	processChannel := make(chan string)
 
 	r := mux.NewRouter()
 
@@ -34,7 +41,8 @@ func main() {
 	}
 
 	ofR := mux.NewRouter()
-	ofR.HandleFunc("/", enqueue(work, responseChannel))
+	enqueueHandler := Handler{work, responseChannel, processChannel}
+	ofR.PathPrefix("/").Handler(enqueueHandler)
 
 	http.Handle("/", ofR)
 	http.Handle("/2018-06-01/", r)
@@ -44,7 +52,7 @@ func main() {
 	}
 
 	wg := sync.WaitGroup{}
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		log.Printf("Lambda shim listening on port: %s", os.Getenv("shim_port"))
 		log.Fatal(s.ListenAndServe())
@@ -57,9 +65,44 @@ func main() {
 		wg.Done()
 	}()
 
+	go func() {
+		log.Println("Process manager")
+		processHandler(processChannel)
+		// log.Fatal(ofServer.ListenAndServe())
+		wg.Done()
+	}()
+
 	ioutil.WriteFile(path.Join(os.TempDir(), ".lock"), []byte{}, 0775)
 
 	wg.Wait()
+}
+
+func processHandler(workCh chan string) {
+	select {
+	case b := <-workCh:
+		fmt.Println(b)
+	}
+}
+
+func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	log.Println("enqueue started: " + r.RequestURI)
+	invocation := Invocation{}
+	if r.Body != nil {
+		body, _ := ioutil.ReadAll(r.Body)
+		log.Println("enqueue data -> " + string(body))
+		invocation.Req = body
+	}
+
+	h.proCh <- "Start"
+	h.workCh <- &invocation
+
+	select {
+	case invocationRes := <-h.responseCh:
+
+		w.Write(invocationRes.Res)
+		log.Println("enqueue done")
+		return
+	}
 }
 
 func nextHandler(workCh chan *Invocation) func(http.ResponseWriter, *http.Request) {
@@ -80,28 +123,6 @@ func nextHandler(workCh chan *Invocation) func(http.ResponseWriter, *http.Reques
 			log.Println("next - [req] " + string(invocation.Req))
 			w.Write(invocation.Req)
 
-		}
-	}
-}
-
-func enqueue(workCh chan *Invocation, doneCh chan *Invocation) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		log.Println("enqueue started: " + r.RequestURI)
-		invocation := Invocation{}
-		if r.Body != nil {
-			body, _ := ioutil.ReadAll(r.Body)
-			log.Println("enqueue data -> " + string(body))
-			invocation.Req = body
-		}
-
-		workCh <- &invocation
-
-		select {
-		case invocationRes := <-doneCh:
-
-			w.Write(invocationRes.Res)
-			log.Println("enqueue done")
-			return
 		}
 	}
 }

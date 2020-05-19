@@ -5,7 +5,7 @@ for(let i=0;i<100;i++) {
   let r = {
     body: {"input": x.toString()},
     json: true,
-    uri: "http://localhost:8080"
+    uri: "http://localhost:8082"
   };
 
   request.post(r, (err, res, bodyOut) => {
