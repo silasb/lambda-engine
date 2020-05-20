@@ -37,16 +37,16 @@ shim_port=8081 port=8082 go run main.go config.go process.go
 ### Invoke the Lambda function
 
 ```
-for i in {0..100} ; do  curl localhost:8080 -d '{"invocation": "#: '$i'"}' && echo ; done
+for i in {0..100} ; do  curl localhost:8082 -d '{"invocation": "#: '$i'"}' && echo ; done
 ```
 
 If you like run this in multiple windows at the same time:
 
 ```
 (
-    for i in {0..100} ; do  curl localhost:8080 -d '{"invocation": "#: '$i'"}' && echo ; done &
-    for i in {101..201} ; do  curl localhost:8080 -d '{"invocation": "#: '$i'"}' && echo ; done &
-    for i in {202..302} ; do  curl localhost:8080 -d '{"invocation": "#: '$i'"}' && echo ; done &
+    for i in {0..100} ; do  curl localhost:8082 -d '{"invocation": "#: '$i'"}' && echo ; done &
+    for i in {101..201} ; do  curl localhost:8082 -d '{"invocation": "#: '$i'"}' && echo ; done &
+    for i in {202..302} ; do  curl localhost:8082 -d '{"invocation": "#: '$i'"}' && echo ; done &
 )
 ```
 
