@@ -86,11 +86,25 @@ func main() {
 }
 
 func processHandler(workCh chan *Config) {
+	c1 := make(chan string, 1)
+	go func() {
+		time.Sleep(30 * time.Second)
+		c1 <- "result 1"
+	}()
+
+	go func() {
+		select {
+		case <-c1:
+			// fmt.Println("got timeout")
+			// stopProcess()
+		}
+	}()
+
 	for {
 		select {
 		case <-workCh:
 			// fmt.Println(config)
-			startProcess()
+			// startProcess()
 		}
 	}
 }
@@ -98,7 +112,7 @@ func processHandler(workCh chan *Config) {
 func startProcess() {
 	log.Println("Starting process...")
 	dns := ":9876"
-	timeout := 30 * time.Second
+	timeout := 5 * time.Second
 	client, err := StartRemoteClient(dns, timeout)
 	if err != nil {
 		panic(err)
@@ -115,7 +129,7 @@ func startProcess() {
 func stopProcess() {
 	log.Println("Stopping process...")
 	dns := ":9876"
-	timeout := 30 * time.Second
+	timeout := 5 * time.Second
 	client, err := StartRemoteClient(dns, timeout)
 	if err != nil {
 		panic(err)
@@ -135,7 +149,11 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		body, _ := ioutil.ReadAll(r.Body)
 		log.Println("enqueue data -> " + string(body))
-		invocation.Req = body
+		if len(body) == 0 {
+			invocation.Req = []byte("{}")
+		} else {
+			invocation.Req = body
+		}
 	}
 
 	h.proCh <- &h.config
@@ -146,7 +164,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		w.Write(invocationRes.Res)
 		log.Println("enqueue done")
-		stopProcess()
+		// stopProcess()
 		return
 	}
 }
