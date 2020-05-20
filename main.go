@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"sync"
+	"time"
 
 	"github.com/docker/distribution/uuid"
 	"github.com/gorilla/mux"
@@ -19,35 +20,43 @@ type Invocation struct {
 }
 
 type Handler struct {
+	config     Config
 	workCh     chan *Invocation
 	responseCh chan *Invocation
-	proCh      chan string
+	proCh      chan *Config
 }
 
 func main() {
+	config := ParseConfig()
 
 	work := make(chan *Invocation)
 	responseChannel := make(chan *Invocation)
-	processChannel := make(chan string)
+	processChannel := make(chan *Config)
 
 	r := mux.NewRouter()
 
 	r.HandleFunc("/2018-06-01/runtime/invocation/next", nextHandler(work))
 	r.HandleFunc("/2018-06-01/runtime/invocation/{id}/response", responseHandler(responseChannel))
 
-	s := &http.Server{
-		Addr:           fmt.Sprintf(":%s", os.Getenv("shim_port")),
-		MaxHeaderBytes: 1 << 20, // Max header of 1MB
-	}
-
 	ofR := mux.NewRouter()
-	enqueueHandler := Handler{work, responseChannel, processChannel}
-	ofR.PathPrefix("/").Handler(enqueueHandler)
+	for domain, handlerDefinition := range config {
+		fmt.Println(domain)
+		enqueueHandler := Handler{handlerDefinition, work, responseChannel, processChannel}
+
+		s := ofR.Host("{subdomain}.pyserve.com").Subrouter()
+		s.PathPrefix("/").Handler(enqueueHandler)
+		// ofR.PathPrefix("/").Handler(enqueueHandler)
+	}
 
 	http.Handle("/", ofR)
 	http.Handle("/2018-06-01/", r)
+
 	ofServer := &http.Server{
 		Addr:           fmt.Sprintf(":%s", os.Getenv("port")),
+		MaxHeaderBytes: 1 << 20, // Max header of 1MB
+	}
+	s := &http.Server{
+		Addr:           fmt.Sprintf(":%s", os.Getenv("shim_port")),
 		MaxHeaderBytes: 1 << 20, // Max header of 1MB
 	}
 
@@ -68,7 +77,6 @@ func main() {
 	go func() {
 		log.Println("Process manager")
 		processHandler(processChannel)
-		// log.Fatal(ofServer.ListenAndServe())
 		wg.Done()
 	}()
 
@@ -77,11 +85,48 @@ func main() {
 	wg.Wait()
 }
 
-func processHandler(workCh chan string) {
-	select {
-	case b := <-workCh:
-		fmt.Println(b)
+func processHandler(workCh chan *Config) {
+	for {
+		select {
+		case <-workCh:
+			// fmt.Println(config)
+			startProcess()
+		}
 	}
+}
+
+func startProcess() {
+	log.Println("Starting process...")
+	dns := ":9876"
+	timeout := 30 * time.Second
+	client, err := StartRemoteClient(dns, timeout)
+	if err != nil {
+		panic(err)
+	}
+
+	err = client.StartProcess("blah")
+	if err != nil {
+		panic(err)
+	}
+
+	log.Println("Started process")
+}
+
+func stopProcess() {
+	log.Println("Stopping process...")
+	dns := ":9876"
+	timeout := 30 * time.Second
+	client, err := StartRemoteClient(dns, timeout)
+	if err != nil {
+		panic(err)
+	}
+
+	err = client.StopProcess("blah")
+	if err != nil {
+		panic(err)
+	}
+
+	log.Println("Stopped process")
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +138,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		invocation.Req = body
 	}
 
-	h.proCh <- "Start"
+	h.proCh <- &h.config
 	h.workCh <- &invocation
 
 	select {
@@ -101,6 +146,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		w.Write(invocationRes.Res)
 		log.Println("enqueue done")
+		stopProcess()
 		return
 	}
 }

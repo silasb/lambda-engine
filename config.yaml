@@ -1,0 +1,3 @@
+api.blah.blah:
+  LAMBDA_TASK_ROOT: ./test
+  _HANDLER: ".handler"
