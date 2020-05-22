@@ -1,31 +1,78 @@
 package main
 
 import (
-	"net"
-	"net/rpc"
+	"log"
 	"time"
+
+	"github.com/struCoder/pmgo/lib/master"
 )
 
-type RemoteClient struct {
-	conn *rpc.Client // RpcConnection for the remote client.
+func uploadLambda(functionName string, bZipFile string, envs []string) error {
+	log.Println("Uploading lambda...")
+	dns := ":9876"
+	timeout := 5 * time.Second
+	client, err := master.StartRemoteClient(dns, timeout)
+	if err != nil {
+		panic(err)
+	}
+
+	err = client.PrepareGoZip(functionName, false, nil, envs, true, bZipFile)
+	if err != nil {
+		return err
+	}
+
+	log.Println("Started process")
+
+	return nil
 }
 
-func StartRemoteClient(dsn string, timeout time.Duration) (*RemoteClient, error) {
-	conn, err := net.DialTimeout("tcp", dsn, timeout)
+func startProcessEnvs(procName string, envs []string) {
+	log.Println("Starting process...")
+	dns := ":9876"
+	timeout := 5 * time.Second
+	client, err := master.StartRemoteClient(dns, timeout)
+	if err != nil {
+		panic(err)
+	}
+
+	err = client.StartProcessEnvs(procName, envs)
+	if err != nil {
+		panic(err)
+	}
+
+	log.Println("Started process")
+}
+
+func getProcesses() (*master.ProcResponse, error) {
+	log.Println("Getting processes...")
+	dns := ":9876"
+	timeout := 5 * time.Second
+	client, err := master.StartRemoteClient(dns, timeout)
 	if err != nil {
 		return nil, err
 	}
-	return &RemoteClient{conn: rpc.NewClient(conn)}, nil
+
+	processes, err := client.MonitStatus()
+
+	// log.Printf("Got processes: %s", processes)
+	return &processes, err
 }
 
-func (client *RemoteClient) StartProcess(procName string) error {
-	var started bool
-	return client.conn.Call("RemoteMaster.StartProcess", procName, &started)
-}
+/*
+func stopProcess() {
+	log.Println("Stopping process...")
+	dns := ":9876"
+	timeout := 5 * time.Second
+	client, err := StartRemoteClient(dns, timeout)
+	if err != nil {
+		panic(err)
+	}
 
-func (client *RemoteClient) StopProcess(procName string) error {
-	var stopped bool
-	return client.conn.Call("RemoteMaster.StopProcess", procName, &stopped)
-}
+	err = client.StopProcess("blah")
+	if err != nil {
+		panic(err)
+	}
 
-// client, err := master.StartRemoteClient(dsn, timeout)
+	log.Println("Stopped process")
+}
+*/

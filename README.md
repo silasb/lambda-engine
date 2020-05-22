@@ -12,13 +12,19 @@ The big POS here is if I can do self-hosted lambda execution with a secure runti
 
 ## Run locally
 
-### Run the Lambda runtime
-
-You'll need Node 8, 10 or 11 installed on your local machine.
+### Run Nats
 
 ```
-git clone https://github.com/silasb/deno-aws-lambda-example
-LAMBDA_TASK_ROOT=$PWD _HANDLER="function.handler" AWS_LAMBDA_RUNTIME_API=127.0.0.1:8081 ./bootstrap
+docker run -d --name nats-main -p 4222:4222 -p 6222:6222 -p 8222:8222 nats
+```
+
+### Run the lambda-process-manager
+
+```
+git clone https://github.com/silasb/lambda-scheduler
+cd lambda-scheduler
+go build
+./pmgo serve
 ```
 
 ### Run the lambda-engine
@@ -31,23 +37,38 @@ You'll need Go 1.13 installed locally for this part.
 git clone https://github.com/silasb/lambda-engine
 cd lambda-engine
 
-shim_port=8081 port=8082 go run main.go config.go process.go
+fd .go | entr -c -r -s "shim_port=8081 port=8082 go run main.go process.go events.go"
 ```
 
-### Invoke the Lambda function
+### Create the Lambda functions
 
 ```
-for i in {0..100} ; do  curl localhost:8082 -d '{"invocation": "#: '$i'"}' && echo ; done
+go run cli.go create-function --function-name h1 --zip-file fileb://examples/function.zip --handler function.handler1
+go run cli.go create-function --function-name h2 --zip-file fileb://examples/function.zip --handler function.handler2
+go run cli.go create-function --function-name h3 --zip-file fileb://examples/function.zip --handler function.handler3
 ```
 
-If you like run this in multiple windows at the same time:
+### Invoke the Lambda function via NATS
 
 ```
-(
-    for i in {0..100} ; do  curl localhost:8082 -d '{"invocation": "#: '$i'"}' && echo ; done &
-    for i in {101..201} ; do  curl localhost:8082 -d '{"invocation": "#: '$i'"}' && echo ; done &
-    for i in {202..302} ; do  curl localhost:8082 -d '{"invocation": "#: '$i'"}' && echo ; done &
-)
+❯ go run cli.go invoke --function-name h1 --payload '{"hello": "hi"}'
+2020/05/21 22:30:36 h1 {"hello": "hi"}
+{"statusCode":200,"body":"{\"version\":{\"deno\":\"1.0.0\",\"v8\":\"8.4.300\",\"typescript\":\"3.9.2\"},\"build\":{\"target\":\"x86_64-unknown-linux-gnu\",\"arch\":\"x86_64\",\"os\":\"linux\",\"vendor\":\"unknown\",\"env\":\"gnu\"},\"event\":{\"hello\":\"hi\"}}"}
+❯ go run cli.go invoke --function-name h2 --payload '{"hello": "hi"}'
+2020/05/21 22:30:39 h2 {"hello": "hi"}
+{"statusCode":200,"body":"{\"hello\":\"world\"}"}
+❯ go run cli.go invoke --function-name h3 --payload '{"hello": "hi"}'
+2020/05/21 22:30:53 h3 {"hello": "hi"}
+"hello world"
+```
+
+### Invoke the Lambda function via HTTP
+
+```
+❯ curl localhost:8082/test -H 'Host: h1.pyserve.com' -d '{"hello": "world"}'
+{"version":{"deno":"1.0.0","v8":"8.4.300","typescript":"3.9.2"},"build":{"target":"x86_64-unknown-linux-gnu","arch":"x86_64","os":"linux","vendor":"unknown","env":"gnu"},"event":{"hello":"world"}}
+❯ curl localhost:8082/test -H 'Host: h2.pyserve.com' -d '{"hello": "world"}'
+{"hello":"world"}
 ```
 
 ## Conceptual diagram

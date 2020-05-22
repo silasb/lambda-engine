@@ -1,14 +1,16 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path"
 	"sync"
-	"time"
 
 	"github.com/docker/distribution/uuid"
 	"github.com/gorilla/mux"
@@ -19,64 +21,116 @@ type Invocation struct {
 	Res []byte
 }
 
-type Handler struct {
-	config     Config
-	workCh     chan *Invocation
-	responseCh chan *Invocation
-	proCh      chan *Config
+type LambdaResponse struct {
+	StatusCode int    `json:"statusCode"`
+	Body       string `json:"body"`
 }
 
-func main() {
-	config := ParseConfig()
+type Handler struct {
+	workCh     chan *Invocation
+	responseCh chan *Invocation
+	// proCh      chan *Config
+}
 
-	work := make(chan *Invocation)
-	responseChannel := make(chan *Invocation)
-	processChannel := make(chan *Config)
+func registerLambda(functionName string) error {
+	workCh := make(WorkCh)
+	responseCh := make(ResponseCh)
+
+	handler := Handler{workCh, responseCh}
+
+	// return func(functionName string) {
+	registerNats(functionName, handler)
+	port := registerLambdaWeb(workCh, responseCh, handler)
+	envs := []string{fmt.Sprintf("AWS_LAMBDA_RUNTIME_API=127.0.0.1:%d", port)}
+	startProcessEnvs(functionName, envs)
+
+	registerPublicWeb(functionName, handler)
+
+	log.Printf("Lambda shim for %s listening on port: %d\n", functionName, port)
+	return nil
+	// }
+}
+
+func registerNats(functionName string, handler Handler) {
+	InitNatsConsumer(functionName, handler)
+}
+
+func registerLambdaWeb(workCh WorkCh, responseCh ResponseCh, handler Handler) int {
+	listener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		panic(err)
+	}
 
 	r := mux.NewRouter()
 
-	r.HandleFunc("/2018-06-01/runtime/invocation/next", nextHandler(work))
-	r.HandleFunc("/2018-06-01/runtime/invocation/{id}/response", responseHandler(responseChannel))
+	r.HandleFunc("/2018-06-01/runtime/invocation/next", nextHandler(workCh))
+	r.HandleFunc("/2018-06-01/runtime/invocation/{id}/response", responseHandler(responseCh))
 
-	ofR := mux.NewRouter()
-	for domain, handlerDefinition := range config {
-		fmt.Println(domain)
-		enqueueHandler := Handler{handlerDefinition, work, responseChannel, processChannel}
-
-		s := ofR.Host("{subdomain}.pyserve.com").Subrouter()
-		s.PathPrefix("/").Handler(enqueueHandler)
-		// ofR.PathPrefix("/").Handler(enqueueHandler)
+	server := &http.Server{
+		Addr:           fmt.Sprintf(":%s", "0"),
+		MaxHeaderBytes: 1 << 20, // Max header of 1MB
+		Handler:        r,
 	}
 
-	http.Handle("/", ofR)
-	http.Handle("/2018-06-01/", r)
+	port := listener.Addr().(*net.TCPAddr).Port
 
-	ofServer := &http.Server{
+	wg.Add(1)
+	go func() {
+		log.Fatal(server.Serve(listener))
+		wg.Done()
+	}()
+
+	return port
+}
+
+func registerPublicWeb(functionName string, handler Handler) error {
+	s := upstreamMux.Host(fmt.Sprintf("%s.pyserve.com", functionName)).Subrouter()
+	s.PathPrefix("/").Handler(handler)
+
+	return nil
+}
+
+type RegisterableCb func(functionName string)
+type WorkCh chan *Invocation
+type ResponseCh chan *Invocation
+
+var wg sync.WaitGroup
+var upstreamMux *mux.Router
+
+func main() {
+	// work := make(WorkCh)
+	// responseChannel := make(ResponseCh)
+	wg = sync.WaitGroup{}
+
+	upstreamMux = mux.NewRouter()
+
+	// registerableCallback := registerLambda(work, responseChannel)
+
+	InitCommandControl(registerLambda)
+
+	processes, _ := getProcesses()
+	for _, process := range processes.Procs {
+		fmt.Printf("%+v\n", process.Name)
+		registerLambda(process.Name)
+	}
+
+	// for functionName, _ := range config {
+	// 	registerableCallback(functionName)
+	// }
+
+	// http.Handle("/", ofR)
+	// http.Handle("/2018-06-01/", r)
+
+	upstreamServer := &http.Server{
 		Addr:           fmt.Sprintf(":%s", os.Getenv("port")),
 		MaxHeaderBytes: 1 << 20, // Max header of 1MB
-	}
-	s := &http.Server{
-		Addr:           fmt.Sprintf(":%s", os.Getenv("shim_port")),
-		MaxHeaderBytes: 1 << 20, // Max header of 1MB
+		Handler:        upstreamMux,
 	}
 
-	wg := sync.WaitGroup{}
-	wg.Add(3)
+	wg.Add(1)
 	go func() {
-		log.Printf("Lambda shim listening on port: %s", os.Getenv("shim_port"))
-		log.Fatal(s.ListenAndServe())
-		wg.Done()
-	}()
-
-	go func() {
-		log.Printf("Watchdog shim listening on port: %s", os.Getenv("port"))
-		log.Fatal(ofServer.ListenAndServe())
-		wg.Done()
-	}()
-
-	go func() {
-		log.Println("Process manager")
-		processHandler(processChannel)
+		log.Printf("Upstream server on port: %s", os.Getenv("port"))
+		log.Fatal(upstreamServer.ListenAndServe())
 		wg.Done()
 	}()
 
@@ -85,62 +139,16 @@ func main() {
 	wg.Wait()
 }
 
-func processHandler(workCh chan *Config) {
-	c1 := make(chan string, 1)
-	go func() {
-		time.Sleep(30 * time.Second)
-		c1 <- "result 1"
-	}()
+func (h Handler) notifyLambda(invocation Invocation) *Invocation {
+	// h.proCh <- &h.config
+	h.workCh <- &invocation
 
-	go func() {
-		select {
-		case <-c1:
-			// fmt.Println("got timeout")
-			// stopProcess()
-		}
-	}()
-
-	for {
-		select {
-		case <-workCh:
-			// fmt.Println(config)
-			// startProcess()
-		}
+	select {
+	case invocationRes := <-h.responseCh:
+		// var r LambdaResponse
+		// json.Unmarshal(invocationRes.Res, &r)
+		return invocationRes
 	}
-}
-
-func startProcess() {
-	log.Println("Starting process...")
-	dns := ":9876"
-	timeout := 5 * time.Second
-	client, err := StartRemoteClient(dns, timeout)
-	if err != nil {
-		panic(err)
-	}
-
-	err = client.StartProcess("blah")
-	if err != nil {
-		panic(err)
-	}
-
-	log.Println("Started process")
-}
-
-func stopProcess() {
-	log.Println("Stopping process...")
-	dns := ":9876"
-	timeout := 5 * time.Second
-	client, err := StartRemoteClient(dns, timeout)
-	if err != nil {
-		panic(err)
-	}
-
-	err = client.StopProcess("blah")
-	if err != nil {
-		panic(err)
-	}
-
-	log.Println("Stopped process")
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -156,17 +164,14 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.proCh <- &h.config
-	h.workCh <- &invocation
+	invocationRes := h.notifyLambda(invocation)
+	var res LambdaResponse
+	json.Unmarshal(invocationRes.Res, &res)
 
-	select {
-	case invocationRes := <-h.responseCh:
-
-		w.Write(invocationRes.Res)
-		log.Println("enqueue done")
-		// stopProcess()
-		return
-	}
+	w.WriteHeader(res.StatusCode)
+	io.WriteString(w, res.Body)
+	log.Println("enqueue done")
+	return
 }
 
 func nextHandler(workCh chan *Invocation) func(http.ResponseWriter, *http.Request) {
