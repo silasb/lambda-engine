@@ -156,12 +156,13 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	invocation := Invocation{}
 	if r.Body != nil {
 		body, _ := ioutil.ReadAll(r.Body)
-		log.Println("enqueue data -> " + string(body))
+		fmt.Println(len(body))
 		if len(body) == 0 {
 			invocation.Req = []byte("{}")
 		} else {
 			invocation.Req = body
 		}
+		log.Println("enqueue data -> " + string(invocation.Req))
 	}
 
 	invocationRes := h.notifyLambda(invocation)

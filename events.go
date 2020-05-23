@@ -23,7 +23,12 @@ func setupNats(functionName string, enqueueHandler Handler) {
 	nc.Subscribe(functionName, func(m *nats.Msg) {
 		fmt.Printf("Received a message: %s\n", string(m.Data))
 		invocation := Invocation{}
-		invocation.Req = m.Data
+		if len(m.Data) == 0 {
+			invocation.Req = []byte("{}")
+		} else {
+			invocation.Req = m.Data
+		}
+		log.Println("enqueue data -> " + string(invocation.Req))
 
 		go func() {
 			invocationRes := enqueueHandler.notifyLambda(invocation)
