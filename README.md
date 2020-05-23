@@ -15,7 +15,7 @@ The big POS here is if I can do self-hosted lambda execution with a secure runti
 ### Run Nats
 
 ```
-docker run -d --name nats-main -p 4222:4222 -p 6222:6222 -p 8222:8222 nats
+docker run -ti --name jetstream -p 4222:4222 -p 8222:8222 synadia/jsm:latest server
 ```
 
 ### Run the lambda-process-manager
