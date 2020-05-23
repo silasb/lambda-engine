@@ -14,7 +14,11 @@ func InitNatsConsumer(functionName string, enqueueHandler Handler) {
 
 func setupNats(functionName string, enqueueHandler Handler) {
 	fmt.Println("Configuring: ", functionName)
-	nc, _ := nats.Connect(nats.DefaultURL)
+	nc, err := nats.Connect(nats.DefaultURL)
+	if err != nil {
+		panic(err)
+	}
+	// defer nc.Close()
 
 	nc.Subscribe(functionName, func(m *nats.Msg) {
 		fmt.Printf("Received a message: %s\n", string(m.Data))
