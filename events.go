@@ -31,8 +31,12 @@ func setupNats(functionName string, enqueueHandler Handler) {
 		log.Println("enqueue data -> " + string(invocation.Req))
 
 		go func() {
-			invocationRes := enqueueHandler.notifyLambda(invocation)
-			nc.Publish(m.Reply, invocationRes.Res)
+			invocationRes, err := enqueueHandler.notifyLambda(invocation)
+			if err != nil {
+				nc.Publish(m.Reply, []byte(err.Error()))
+			} else {
+				nc.Publish(m.Reply, invocationRes.Res)
+			}
 		}()
 	})
 }
@@ -41,16 +45,16 @@ type CreateFunction struct {
 	FunctionName string `json:"functionName"`
 	Body         string `json:"body"`
 	Handler      string `json:"handler"`
+	Timeout      int    `json:"timeout"`
 }
 
-func InitCommandControl(registerableCallback func(functionName string) error) {
+func InitCommandControl(registerableCallback RegisterableCb) {
 	nc, _ := nats.Connect(nats.DefaultURL)
 	nc.Subscribe("createFunction", func(m *nats.Msg) {
-		fmt.Println("Received a message")
-		nc.Publish(m.Reply, nil)
-
 		var d CreateFunction
 		json.Unmarshal(m.Data, &d)
+		fmt.Printf("Received a message: %+v\n", d)
+		nc.Publish(m.Reply, nil)
 
 		var envs []string
 		envs = append(
@@ -58,12 +62,12 @@ func InitCommandControl(registerableCallback func(functionName string) error) {
 			"_HANDLER="+d.Handler,
 		)
 
-		err := uploadLambda(d.FunctionName, d.Body, envs)
+		err := uploadLambda(d.FunctionName, d.Body, envs, d.Timeout)
 		if err != nil {
 			log.Println(err)
 			return
 		}
 
-		registerableCallback(d.FunctionName)
+		registerableCallback(d.FunctionName, d.Timeout)
 	})
 }

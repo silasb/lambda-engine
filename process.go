@@ -7,21 +7,21 @@ import (
 	"github.com/struCoder/pmgo/lib/master"
 )
 
-func uploadLambda(functionName string, bZipFile string, envs []string) error {
+func uploadLambda(functionName string, bZipFile string, envs []string, timeout int) error {
 	log.Println("Uploading lambda...")
 	dns := ":9876"
-	timeout := 5 * time.Second
-	client, err := master.StartRemoteClient(dns, timeout)
+	rpcTimeout := 5 * time.Second
+	client, err := master.StartRemoteClient(dns, rpcTimeout)
 	if err != nil {
 		panic(err)
 	}
 
-	err = client.PrepareGoZip(functionName, false, nil, envs, true, bZipFile)
+	err = client.PrepareGoZip(functionName, false, nil, envs, true, bZipFile, timeout)
 	if err != nil {
 		return err
 	}
 
-	log.Println("Started process")
+	log.Println("lambda uploaded")
 
 	return nil
 }
@@ -58,21 +58,19 @@ func getProcesses() (*master.ProcResponse, error) {
 	return &processes, err
 }
 
-/*
-func stopProcess() {
-	log.Println("Stopping process...")
+func restartProcess(functionName string) {
+	log.Println("Restarting process...")
 	dns := ":9876"
 	timeout := 5 * time.Second
-	client, err := StartRemoteClient(dns, timeout)
+	client, err := master.StartRemoteClient(dns, timeout)
 	if err != nil {
 		panic(err)
 	}
 
-	err = client.StopProcess("blah")
+	err = client.ForceRestartProcess(functionName)
 	if err != nil {
 		panic(err)
 	}
 
-	log.Println("Stopped process")
+	log.Println("Restarted process")
 }
-*/

@@ -27,6 +27,7 @@ var (
 	createFunctionName = createFunction.Flag("function-name", "").Required().String()
 	createZipFile      = createFunction.Flag("zip-file", "").Required().String()
 	createHandler      = createFunction.Flag("handler", "").Required().String()
+	createTimeout      = createFunction.Flag("timeout", "").Int()
 	// serveConfigFile = serve.Flag("config-file", "Config file location").String()
 
 	// resurrect = app.Command("resurrect", "Resurrect all previously save processes.")
@@ -70,7 +71,7 @@ func main() {
 		}
 
 		// err = nc.Publish(*functionName, []byte(*payload))
-		msg, err := nc.Request(*invokeFunctionName, []byte(*invokePayload), 1*time.Second)
+		msg, err := nc.Request(*invokeFunctionName, []byte(*invokePayload), 901*time.Second)
 		if err != nil {
 			panic(err)
 		}
@@ -100,14 +101,23 @@ func buildFunction() {
 		b, _ := ioutil.ReadAll(file)
 		encoded := base64.StdEncoding.EncodeToString(b)
 
+		var timeout int
+		if *createTimeout == 0 {
+			timeout = 3
+		} else {
+			timeout = *createTimeout
+		}
+
 		c := struct {
 			FunctionName string `json:"functionName"`
 			Body         string `json:"body"`
 			Handler      string `json:"handler"`
+			Timeout      int    `json:"timeout"`
 		}{
 			FunctionName: *createFunctionName,
 			Body:         encoded,
 			Handler:      *createHandler,
+			Timeout:      timeout,
 		}
 
 		payload, err := json.Marshal(&c)
