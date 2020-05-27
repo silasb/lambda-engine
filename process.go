@@ -74,3 +74,35 @@ func restartProcess(functionName string) {
 
 	log.Println("Restarted process")
 }
+
+func deleteProcess(functionName string) error {
+	log.Println("Deleting function...")
+	dns := ":9876"
+	timeout := 5 * time.Second
+	client, err := master.StartRemoteClient(dns, timeout)
+	if err != nil {
+		panic(err)
+	}
+
+	err = client.DeleteProcess(functionName)
+
+	log.Println("Delete function...")
+
+	return err
+}
+
+func listProcess() (*master.ProcResponse, error) {
+	log.Println("List function...")
+	dns := ":9876"
+	timeout := 5 * time.Second
+	_, err := master.StartRemoteClient(dns, timeout)
+	if err != nil {
+		panic(err)
+	}
+
+	process, err := getProcesses()
+
+	log.Println("List function...")
+
+	return process, err
+}

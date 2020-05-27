@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 
@@ -50,11 +49,13 @@ type CreateFunction struct {
 
 func InitCommandControl(registerableCallback RegisterableCb) {
 	nc, _ := nats.Connect(nats.DefaultURL)
-	nc.Subscribe("createFunction", func(m *nats.Msg) {
-		var d CreateFunction
-		json.Unmarshal(m.Data, &d)
+	c, _ := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
+
+	c.Subscribe("createFunction", func(d *CreateFunction, reply string) {
+		//var d CreateFunction
+		//json.Unmarshal(m.Data, &d)
 		fmt.Printf("Received a message: %+v\n", d)
-		nc.Publish(m.Reply, nil)
+		c.Publish(reply, nil)
 
 		var envs []string
 		envs = append(
@@ -69,5 +70,27 @@ func InitCommandControl(registerableCallback RegisterableCb) {
 		}
 
 		registerableCallback(d.FunctionName, d.Timeout)
+	})
+
+	c.Subscribe("deleteFunction", func(subj string, reply string, msg string) {
+		fmt.Printf("Received a message: %+v %+v\n", subj, msg)
+
+		err := deleteProcess(msg)
+		if err != nil {
+			c.Publish(reply, []byte(err.Error()))
+		} else {
+			c.Publish(reply, nil)
+		}
+	})
+
+	c.Subscribe("listFunctions", func(subj string, reply string, msg string) {
+		fmt.Printf("Received a message: %+v\n", subj)
+
+		processes, err := listProcess()
+		if err != nil {
+			c.Publish(reply, []byte(err.Error()))
+		} else {
+			c.Publish(reply, processes)
+		}
 	})
 }

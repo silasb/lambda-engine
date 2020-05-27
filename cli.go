@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/struCoder/pmgo/lib/master"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
@@ -28,6 +28,12 @@ var (
 	createZipFile      = createFunction.Flag("zip-file", "").Required().String()
 	createHandler      = createFunction.Flag("handler", "").Required().String()
 	createTimeout      = createFunction.Flag("timeout", "").Int()
+
+	deleteFunctionCmd  = app.Command("delete-function", "delete an function")
+	deleteFunctionName = deleteFunctionCmd.Flag("function-name", "").Required().String()
+
+	listFunctionsCmd = app.Command("list-functions", "list functions")
+
 	// serveConfigFile = serve.Flag("config-file", "Config file location").String()
 
 	// resurrect = app.Command("resurrect", "Resurrect all previously save processes.")
@@ -60,30 +66,53 @@ var (
 	// infoName = info.Arg("name", "process name").Required().String()
 )
 
+func client() *nats.EncodedConn {
+	nc, err := nats.Connect(nats.DefaultURL)
+	if err != nil {
+		panic(err)
+	}
+	c, err := nats.NewEncodedConn(nc, nats.JSON_ENCODER)
+	if err != nil {
+		panic(err)
+	}
+
+	return c
+}
+
 func main() {
 	switch kingpin.MustParse(app.Parse(os.Args[1:])) {
 	case invoke.FullCommand():
 		log.Println(*invokeFunctionName, *invokePayload)
 
-		nc, err := nats.Connect(nats.DefaultURL)
-		if err != nil {
-			panic(err)
-		}
+		c := client()
 
 		// err = nc.Publish(*functionName, []byte(*payload))
-		msg, err := nc.Request(*invokeFunctionName, []byte(*invokePayload), 901*time.Second)
+		var msg string
+		err := c.Request(*invokeFunctionName, *invokePayload, &msg, 901*time.Second)
 		if err != nil {
 			panic(err)
 		}
 
-		fmt.Println(string(msg.Data))
+		fmt.Println(msg)
 
-		nc.Close()
+		c.Close()
 
 	case createFunction.FullCommand():
 		log.Println(*createFunctionName, *createZipFile, *createHandler)
 		buildFunction()
+	case deleteFunctionCmd.FullCommand():
+		log.Println(*deleteFunctionName)
+		deleteFunction()
+	case listFunctionsCmd.FullCommand():
+		listFunctions()
 	}
+}
+
+type CreateFunction struct {
+	FunctionName string `json:"functionName"`
+	Body         string `json:"body"`
+	Handler      string `json:"handler"`
+	Timeout      int    `json:"timeout"`
 }
 
 func buildFunction() {
@@ -108,39 +137,56 @@ func buildFunction() {
 			timeout = *createTimeout
 		}
 
-		c := struct {
-			FunctionName string `json:"functionName"`
-			Body         string `json:"body"`
-			Handler      string `json:"handler"`
-			Timeout      int    `json:"timeout"`
-		}{
+		payload := CreateFunction{
 			FunctionName: *createFunctionName,
 			Body:         encoded,
 			Handler:      *createHandler,
 			Timeout:      timeout,
 		}
 
-		payload, err := json.Marshal(&c)
+		c := client()
+
+		var msg string
+		err = c.Request("createFunction", payload, &msg, 1*time.Second)
 		if err != nil {
 			panic(err)
 		}
 
-		nc, err := nats.Connect(nats.DefaultURL)
-		if err != nil {
-			panic(err)
-		}
+		fmt.Println(msg)
 
-		msg, err := nc.Request("createFunction", payload, 1*time.Second)
-		if err != nil {
-			panic(err)
-		}
-
-		fmt.Println(string(msg.Data))
-
-		nc.Close()
+		c.Close()
 
 	} else {
 		panic("unknown file scheme")
 	}
+}
 
+func deleteFunction() {
+	c := client()
+
+	var msg string
+	err := c.Request("deleteFunction", *deleteFunctionName, &msg, 5*time.Second)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(msg)
+
+	c.Close()
+}
+
+func listFunctions() {
+	c := client()
+
+	var processes *master.ProcResponse
+	err := c.Request("listFunctions", nil, &processes, 5*time.Second)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, process := range processes.Procs {
+		fmt.Printf("%+v\n", process.Name)
+	}
+
+	c.Close()
 }
